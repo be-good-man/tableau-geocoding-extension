@@ -21,18 +21,33 @@ body {
   margin-bottom: 16px;
 }
 
-.input-row input[type="text"] {
+.input-wrapper {
   flex: 1;
-  padding: 8px 12px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-wrapper input[type="text"] {
+  width: 100%;
+  padding: 8px 32px 8px 12px;
   border: 1px solid #ccc;
   border-radius: 4px;
   font-size: 14px;
 }
 
-.input-row input[type="text"]:focus {
+.input-wrapper input[type="text"]:focus {
   outline: none;
   border-color: #4e79a7;
   box-shadow: 0 0 0 2px rgba(78, 121, 167, 0.2);
+}
+
+.success-check {
+  position: absolute;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
 }
 
 .btn {
@@ -50,8 +65,14 @@ body {
   color: #fff;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: #3d6290;
+}
+
+.btn-primary:disabled {
+  background: #a8bdd4;
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 
 .btn-icon {
@@ -67,78 +88,28 @@ body {
   background: #e0e0e0;
 }
 
-/* History section */
-.history-section {
-  border-top: 1px solid #eee;
-  padding-top: 12px;
+.btn-recent {
+  position: relative;
 }
 
-.history-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.history-header h4 {
-  font-size: 12px;
+.recent-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #4e79a7;
+  color: #fff;
+  font-size: 10px;
   font-weight: 600;
-  color: #666;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.btn-clear {
-  padding: 4px 8px;
-  font-size: 11px;
-  background: none;
-  border: 1px solid #ccc;
-  border-radius: 3px;
-  color: #666;
-  cursor: pointer;
-}
-
-.btn-clear:hover {
-  background: #f5f5f5;
-  color: #333;
-}
-
-.history-list {
-  list-style: none;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.history-item {
-  padding: 8px 10px;
-  border-radius: 4px;
-  cursor: pointer;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  font-size: 13px;
-  transition: background-color 0.1s ease;
+  justify-content: center;
+  padding: 0 4px;
+  line-height: 1;
 }
 
-.history-item:hover {
-  background: #f5f8fc;
-}
-
-.history-item.active {
-  background: #e8f0fa;
-  border-left: 3px solid #4e79a7;
-}
-
-.history-item .query {
-  font-weight: 500;
-  color: #333;
-}
-
-.history-item .coords {
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
-  font-size: 11px;
-  color: #888;
-}
 
 /* Status/error messages */
 .status-message {
@@ -166,4 +137,112 @@ body {
   padding: 24px;
   color: #999;
   font-size: 13px;
+}
+
+/* Modal overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-dialog {
+  background: #fff;
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 420px;
+  width: 90%;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 12px;
+}
+
+.modal-body {
+  font-size: 14px;
+  color: #333;
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.modal-instructions {
+  font-size: 13px;
+  color: #555;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.param-name-display {
+  color: #4e79a7;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+}
+
+.copy-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.copy-input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  background: #f8f9fa;
+  color: #333;
+}
+
+.copy-btn {
+  white-space: nowrap;
+}
+
+.copy-feedback {
+  font-size: 12px;
+  color: #16a34a;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.hidden {
+  display: none;
+}
+
+/* Parameter select in modal */
+.form-group {
+  margin-bottom: 16px;
+}
+
+.param-select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 14px;
+  background: #fff;
+}
+
+.param-select:focus {
+  outline: none;
+  border-color: #4e79a7;
+  box-shadow: 0 0 0 2px rgba(78, 121, 167, 0.2);
 }

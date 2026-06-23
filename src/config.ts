@@ -27,9 +27,11 @@ async function initializeConfig(): Promise<void> {
   });
 
   // Populate spatial parameter dropdown
+  // Populate spatial parameter dropdown (only spatial type parameters)
   const paramSelect = document.getElementById('paramSelect') as HTMLSelectElement;
   const parameters = await getAllParameters();
-  parameters.forEach((p: any) => {
+  const spatialParameters = parameters.filter((p: any) => p.dataType === 'spatial');
+  spatialParameters.forEach((p: any) => {
     const option = document.createElement('option');
     option.value = p.name;
     option.textContent = p.name;

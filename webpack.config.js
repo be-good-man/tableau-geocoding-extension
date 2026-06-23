@@ -7,6 +7,7 @@ module.exports = {
   entry: {
     app: './src/app.ts',
     config: './src/config.ts',
+    history: './src/history.ts',
   },
   output: {
     filename: '[name].bundle.js',
@@ -40,12 +41,18 @@ module.exports = {
       filename: 'config.html',
       chunks: ['config'],
     }),
+    new HtmlWebpackPlugin({
+      template: './src/history.html',
+      filename: 'history.html',
+      chunks: ['history'],
+    }),
     new MiniCssExtractPlugin({
       filename: '[name].css',
     }),
     new CopyWebpackPlugin({
       patterns: [
         { from: 'manifest', to: '.' },
+        { from: 'public/lib', to: 'lib' },
       ],
     }),
   ],

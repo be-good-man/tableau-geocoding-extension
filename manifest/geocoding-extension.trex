@@ -4,20 +4,20 @@
     <default-locale>en_US</default-locale>
     <name resource-id="name"/>
     <description>Geocode addresses and write results to a spatial parameter</description>
-    <author name="Your Name" email="you@example.com" organization="Your Org"
-            website="https://github.com/yourorg/tableau-geocoding-extension"/>
+    <author name="Benjamin Goodman" email="benjamin.goodman@salesforce.com" organization="Salesforce"
+            website="https://github.com/be-good-man/tableau-geocoding-extension"/>
     <min-api-version>1.4</min-api-version>
     <source-location>
       <url>http://localhost:8765/index.html</url>
     </source-location>
-    <icon>iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAApgAAAKYB3X3/OAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAEbSURBVEiJ7ZU9TsMwGIaf2EmTgMQFECtiQ4IzcAgGRi7AAVi5AjNXYGBkQYKBC3AE1oqBDUGa2P4YYruJGxgYeKVP/v7e5/NviKr+K2Knr+c5AFDi3QEqAYjqf0BIUgBc4yfwAeCpGwATr4F+n/cADvAEnAK7wGPgMoQXMaENAOJ2YJm/gSY1sOs72CW3m08BkFbgJdPmkwEwYDgJ+FAExjN+MwE5BPY0mBEdu7KZJ6FAA7AI/GlyHQduOyPAAAAAElFTkSuQmCC</icon>
+    <icon>iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC</icon>
     <permissions>
       <permission>full data</permission>
     </permissions>
   </dashboard-extension>
   <resources>
     <resource id="name">
-      <text locale="en_US">Geocoding Parameter Setter</text>
+      <text locale="en_US">Tableau Geocode</text>
     </resource>
   </resources>
 </manifest>

@@ -1,25 +1,54 @@
 import './styles.css';
-import { getProvider, getAllProviders } from './providers';
+import { getProvider } from './providers';
 import { geocodeCache, CacheEntry } from './cache';
 import { toWkt } from './spatial';
-import { getSettings, isConfigured } from './settings';
-import { getParameterByName, writeSpatialValue } from './parameters';
+import { getSettings, isConfigured, saveSettings } from './settings';
+import { getParameterByName, getAllParameters, writeSpatialValue } from './parameters';
 
 declare const tableau: any;
 
 let spatialParam: any = null;
+let lastSubmittedQuery: string = '';
 
 /**
  * Main entry point — initializes the extension and sets up the UI.
  */
 async function initialize(): Promise<void> {
-  await tableau.extensions.initializeAsync();
+  try {
+    await tableau.extensions.initializeAsync();
+  } catch (e) {
+    showStatus('Failed to initialize Tableau Extensions API.', 'error');
+    return;
+  }
 
-  const settings = getSettings();
-  const provider = settings.provider ? getProvider(settings.provider) : null;
-  const configured = provider ? isConfigured(settings, provider.requiresApiKey) : false;
+  const currentSettings = getSettings();
 
-  // If not configured, prompt the user with the settings dialog
+  // First: check if a target parameter has been selected previously
+  if (currentSettings.spatialParamName) {
+    // Verify the saved parameter still exists in the workbook
+    spatialParam = await getParameterByName(currentSettings.spatialParamName);
+    if (!spatialParam) {
+      // Previously saved parameter was removed — prompt user to select again
+      await showParameterSelectionModal();
+      if (!spatialParam) {
+        setupEventListeners();
+        return;
+      }
+    }
+  } else {
+    // No parameter configured yet — prompt user to select one
+    await showParameterSelectionModal();
+    if (!spatialParam) {
+      setupEventListeners();
+      return;
+    }
+  }
+
+  // Second: check if a provider is configured
+  const refreshedSettings = getSettings();
+  const provider = refreshedSettings.provider ? getProvider(refreshedSettings.provider) : null;
+  const configured = provider ? isConfigured(refreshedSettings, provider.requiresApiKey) : false;
+
   if (!configured) {
     try {
       await openSettingsDialog();
@@ -31,19 +60,91 @@ async function initialize(): Promise<void> {
     }
   }
 
-  // Re-read settings after potential dialog
-  const currentSettings = getSettings();
-  spatialParam = await getParameterByName(currentSettings.spatialParamName);
+  setupEventListeners();
+  updateRecentCount();
+}
 
-  if (!spatialParam) {
-    showStatus(
-      `Parameter "${currentSettings.spatialParamName}" not found. Please create it in your workbook or update Settings.`,
-      'error'
-    );
+/**
+ * Show a modal that lists all spatial workbook parameters and lets the user pick one.
+ * Resolves when the user selects a parameter or dismisses the modal.
+ */
+async function showParameterSelectionModal(): Promise<void> {
+  const allParameters = await getAllParameters();
+
+  // Filter to only spatial parameters
+  const spatialParameters = allParameters.filter(
+    (p: any) => p.dataType === 'spatial'
+  );
+
+  if (spatialParameters.length === 0) {
+    showMissingParameterModal('GeocodedLocation');
+    return;
   }
 
-  setupEventListeners();
-  renderHistory();
+  return new Promise<void>((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-dialog';
+
+    modal.innerHTML = `
+      <h3 class="modal-title">Select Target Parameter</h3>
+      <p class="modal-body">
+        Choose which spatial parameter should receive the geocoded coordinates (as a WKT POINT).
+      </p>
+      <div class="form-group">
+        <select class="param-select" id="paramSelectModal">
+          <option value="">-- Select a spatial parameter --</option>
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="paramSelectCancel">Cancel</button>
+        <button class="btn btn-primary" id="paramSelectConfirm">Confirm</button>
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Populate the dropdown with spatial parameters only
+    const select = document.getElementById('paramSelectModal') as HTMLSelectElement;
+    spatialParameters.forEach((p: any) => {
+      const option = document.createElement('option');
+      option.value = p.name;
+      option.textContent = p.name;
+      select.appendChild(option);
+    });
+
+    // Confirm button
+    const confirmBtn = document.getElementById('paramSelectConfirm') as HTMLButtonElement;
+    confirmBtn.addEventListener('click', async () => {
+      const selectedName = select.value;
+      if (!selectedName) {
+        select.style.borderColor = '#b91c1c';
+        return;
+      }
+
+      // Save selection to settings
+      const settings = getSettings();
+      settings.spatialParamName = selectedName;
+      await saveSettings(settings);
+
+      // Set the spatial param reference
+      spatialParam = await getParameterByName(selectedName);
+
+      overlay.remove();
+      resolve();
+    });
+
+    // Cancel button
+    const cancelBtn = document.getElementById('paramSelectCancel') as HTMLButtonElement;
+    cancelBtn.addEventListener('click', () => {
+      overlay.remove();
+      showStatus('No target parameter selected. Click Settings to configure.', 'error');
+      resolve();
+    });
+  });
 }
 
 /**
@@ -63,16 +164,31 @@ function setupEventListeners(): void {
   const addressInput = document.getElementById('addressInput') as HTMLInputElement;
   const locateBtn = document.getElementById('locateBtn') as HTMLButtonElement;
   const settingsBtn = document.getElementById('settingsBtn') as HTMLButtonElement;
-  const clearHistoryBtn = document.getElementById('clearHistoryBtn') as HTMLButtonElement;
+
+  // Start with Locate button disabled
+  locateBtn.disabled = true;
+
+  // Enable/disable Locate button based on input state + hide success check
+  addressInput.addEventListener('input', () => {
+    updateLocateButtonState(addressInput, locateBtn);
+    const successCheck = document.getElementById('successCheck') as HTMLSpanElement;
+    successCheck.classList.add('hidden');
+  });
 
   // Locate button click
-  locateBtn.addEventListener('click', () => submitGeocode());
+  locateBtn.addEventListener('click', () => {
+    if (!locateBtn.disabled) {
+      submitGeocode();
+    }
+  });
 
   // Enter key in address field
   addressInput.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      submitGeocode();
+      if (!locateBtn.disabled) {
+        submitGeocode();
+      }
     }
   });
 
@@ -89,11 +205,57 @@ function setupEventListeners(): void {
     }
   });
 
-  // Clear history button
-  clearHistoryBtn.addEventListener('click', () => {
-    geocodeCache.clear();
-    renderHistory();
+  // Recent Requests modal
+  const recentBtn = document.getElementById('recentBtn') as HTMLButtonElement;
+
+  recentBtn.addEventListener('click', async () => {
+    try {
+      // Store history in settings so the dialog can read it
+      const historyPayload = JSON.stringify(geocodeCache.getHistory());
+      tableau.extensions.settings.set('_historyData', historyPayload);
+      await tableau.extensions.settings.saveAsync();
+
+      const result = await tableau.extensions.ui.displayDialogAsync('history.html', historyPayload, {
+        width: 500,
+        height: 400,
+      });
+      if (result === 'cleared') {
+        // User cleared all history in the dialog
+        geocodeCache.clear();
+      } else if (result && result !== 'closed') {
+        // User selected a history entry — parse it and apply
+        try {
+          const entry: CacheEntry = JSON.parse(result);
+          if (spatialParam && entry.result) {
+            const wkt = toWkt(entry.result.latitude, entry.result.longitude);
+            await writeSpatialValue(spatialParam, wkt);
+            const addressInput = document.getElementById('addressInput') as HTMLInputElement;
+            addressInput.value = entry.query;
+            lastSubmittedQuery = entry.query;
+            const locateBtn = document.getElementById('locateBtn') as HTMLButtonElement;
+            locateBtn.disabled = true;
+            const successCheck = document.getElementById('successCheck') as HTMLSpanElement;
+            successCheck.classList.remove('hidden');
+          }
+        } catch {
+          // Not valid JSON — dialog was just closed
+        }
+      }
+      updateRecentCount();
+    } catch {
+      // Dialog was closed without a payload
+      updateRecentCount();
+    }
   });
+}
+
+/**
+ * Enable or disable the Locate button based on whether the input
+ * is non-empty and different from the last submitted query.
+ */
+function updateLocateButtonState(addressInput: HTMLInputElement, locateBtn: HTMLButtonElement): void {
+  const currentValue = addressInput.value.trim();
+  locateBtn.disabled = !currentValue || currentValue === lastSubmittedQuery;
 }
 
 /**
@@ -101,9 +263,10 @@ function setupEventListeners(): void {
  */
 async function submitGeocode(): Promise<void> {
   const addressInput = document.getElementById('addressInput') as HTMLInputElement;
+  const locateBtn = document.getElementById('locateBtn') as HTMLButtonElement;
   const address = addressInput.value.trim();
 
-  if (!address) return;
+  if (!address || address === lastSubmittedQuery) return;
 
   const settings = getSettings();
   if (!settings.provider) {
@@ -133,67 +296,129 @@ async function submitGeocode(): Promise<void> {
     const wkt = toWkt(result.latitude, result.longitude);
     await writeSpatialValue(spatialParam, wkt);
 
+    // Track last submitted query and disable button
+    lastSubmittedQuery = address;
+    locateBtn.disabled = true;
+
+    // Show success check mark
+    const successCheck = document.getElementById('successCheck') as HTMLSpanElement;
+    successCheck.classList.remove('hidden');
+
     clearStatus();
-    renderHistory();
+    updateRecentCount();
   } catch (err: any) {
     showStatus(`Geocoding failed: ${err.message}`, 'error');
   }
 }
 
 /**
- * Handle clicking a history entry — apply cached result without API call.
+ * Update the recent requests badge count on the button.
  */
-function onHistorySelect(entry: CacheEntry): void {
-  if (!spatialParam) return;
+function updateRecentCount(): void {
+  const recentCount = document.getElementById('recentCount') as HTMLSpanElement;
+  const history = geocodeCache.getHistory();
 
-  const wkt = toWkt(entry.result.latitude, entry.result.longitude);
-  writeSpatialValue(spatialParam, wkt);
-
-  // Update the address input to show what was selected
-  const addressInput = document.getElementById('addressInput') as HTMLInputElement;
-  addressInput.value = entry.query;
-
-  renderHistory(entry);
+  if (history.length > 0) {
+    recentCount.textContent = history.length.toString();
+    recentCount.classList.remove('hidden');
+  } else {
+    recentCount.classList.add('hidden');
+  }
 }
 
 /**
- * Render the history list UI.
+ * Show a modal popup informing the user that the required parameter is missing.
+ * Includes a copy button so they can easily copy the parameter name.
  */
-function renderHistory(activeEntry?: CacheEntry): void {
-  const historyList = document.getElementById('historyList') as HTMLUListElement;
-  const emptyState = document.getElementById('emptyState') as HTMLDivElement;
-  const history = geocodeCache.getHistory();
+function showMissingParameterModal(paramName: string): void {
+  // Create overlay
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
 
-  historyList.innerHTML = '';
+  const modal = document.createElement('div');
+  modal.className = 'modal-dialog';
 
-  if (history.length === 0) {
-    emptyState.style.display = 'block';
-    return;
-  }
+  modal.innerHTML = `
+    <h3 class="modal-title">No Spatial Parameter Found</h3>
+    <p class="modal-body">
+      This extension requires a spatial parameter in your workbook. No spatial parameters were found.
+    </p>
+    <p class="modal-instructions">
+      To create a parameter, navigate to a worksheet. In the Data pane, click the drop-down arrow
+      in the top right of the pane and select <strong>Create Parameter</strong>. Choose a data type:
+      <strong>Spatial</strong>. Under Allowable values, select <strong>All</strong>. Click
+      <strong>OK</strong>. Return to this dashboard to complete the configuration.
+    </p>
+    <p class="modal-body">Suggested parameter name:</p>
+    <div class="copy-row">
+      <input type="text" class="copy-input" id="paramNameCopy" value="${paramName}" readonly>
+      <button class="btn btn-primary copy-btn" id="copyParamBtn">Copy</button>
+    </div>
+    <div class="copy-feedback hidden" id="copyFeedback">Copied!</div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" id="recheckParamBtn">Re-check Parameters</button>
+      <button class="btn btn-secondary" id="dismissModalBtn">Dismiss</button>
+    </div>
+  `;
 
-  emptyState.style.display = 'none';
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 
-  history.forEach(entry => {
-    const li = document.createElement('li');
-    li.className = 'history-item';
+  // Copy button handler
+  const copyBtn = document.getElementById('copyParamBtn') as HTMLButtonElement;
+  const copyInput = document.getElementById('paramNameCopy') as HTMLInputElement;
+  const copyFeedback = document.getElementById('copyFeedback') as HTMLDivElement;
 
-    if (activeEntry && activeEntry.query === entry.query && activeEntry.provider === entry.provider) {
-      li.classList.add('active');
+  copyBtn.addEventListener('click', () => {
+    // Create a temporary textarea to reliably copy text
+    // This works in iframes and non-HTTPS contexts where navigator.clipboard is unavailable
+    const textarea = document.createElement('textarea');
+    textarea.value = paramName;
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+
+    try {
+      document.execCommand('copy');
+      copyFeedback.classList.remove('hidden');
+      setTimeout(() => copyFeedback.classList.add('hidden'), 2000);
+    } catch {
+      // Last resort — select the visible input so user can Ctrl+C manually
+      copyInput.select();
     }
 
-    const querySpan = document.createElement('span');
-    querySpan.className = 'query';
-    querySpan.textContent = `"${entry.query}"`;
+    document.body.removeChild(textarea);
+  });
 
-    const coordsSpan = document.createElement('span');
-    coordsSpan.className = 'coords';
-    coordsSpan.textContent = `POINT(${entry.result.longitude.toFixed(4)} ${entry.result.latitude.toFixed(4)})`;
+  // Re-check button — re-runs the parameter check from scratch
+  const recheckBtn = document.getElementById('recheckParamBtn') as HTMLButtonElement;
+  recheckBtn.addEventListener('click', async () => {
+    overlay.remove();
+    clearStatus();
+    await showParameterSelectionModal();
+    if (spatialParam) {
+      // Parameter found and selected — continue initialization
+      const refreshedSettings = getSettings();
+      const provider = refreshedSettings.provider ? getProvider(refreshedSettings.provider) : null;
+      const configured = provider ? isConfigured(refreshedSettings, provider.requiresApiKey) : false;
+      if (!configured) {
+        try {
+          await openSettingsDialog();
+        } catch (e) {
+          showStatus('Please configure a geocoding provider via the Settings button.', 'error');
+        }
+      }
+      updateRecentCount();
+    }
+  });
 
-    li.appendChild(querySpan);
-    li.appendChild(coordsSpan);
-    li.addEventListener('click', () => onHistorySelect(entry));
-
-    historyList.appendChild(li);
+  // Dismiss button handler
+  const dismissBtn = document.getElementById('dismissModalBtn') as HTMLButtonElement;
+  dismissBtn.addEventListener('click', () => {
+    overlay.remove();
   });
 }
 

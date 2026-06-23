@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recent Requests</title>
+  <script src="./lib/tableau.extensions.1.latest.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      color: #333;
+      padding: 20px;
+      background: #fff;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    h2 {
+      font-size: 16px;
+      color: #1a1a1a;
+    }
+    .btn {
+      padding: 6px 14px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .btn-clear {
+      background: none;
+      border: 1px solid #ccc;
+      color: #666;
+      border-radius: 3px;
+      padding: 4px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn-clear:hover { background: #f5f5f5; color: #333; }
+    .btn-secondary {
+      background: #f0f0f0;
+      color: #333;
+      border: 1px solid #ccc;
+    }
+    .btn-secondary:hover { background: #e0e0e0; }
+    .history-list {
+      list-style: none;
+      max-height: 320px;
+      overflow-y: auto;
+      border: 1px solid #eee;
+      border-radius: 6px;
+    }
+    .history-item {
+      padding: 10px 14px;
+      cursor: pointer;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      font-size: 13px;
+      border-bottom: 1px solid #f0f0f0;
+      transition: background-color 0.1s ease;
+    }
+    .history-item:last-child { border-bottom: none; }
+    .history-item:hover { background: #f5f8fc; }
+    .history-item .provider-icon { flex-shrink: 0; }
+    .history-item .query {
+      font-weight: 500;
+      color: #333;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-item .coords {
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+      font-size: 11px;
+      color: #888;
+      white-space: nowrap;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 32px;
+      color: #999;
+      font-size: 13px;
+    }
+    .footer {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 16px;
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>Recent Requests</h2>
+    <button class="btn-clear" id="clearBtn">Clear All</button>
+  </div>
+  <ul class="history-list" id="historyList"></ul>
+  <div class="empty-state hidden" id="emptyState">No geocoding requests yet.</div>
+  <div class="footer">
+    <button class="btn btn-secondary" id="closeBtn">Close</button>
+  </div>
+</body>
+</html>
