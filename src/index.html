@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Geocoding Extension</title>
+  <script src="https://cdn.jsdelivr.net/npm/@anthropic-ai/tableau-extensions-api@latest/lib/tableau.extensions.1.latest.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Status messages (errors, loading) -->
+    <div id="statusContainer"></div>
+
+    <!-- Main input row: Address + Locate + Settings -->
+    <div class="input-row">
+      <input type="text" id="addressInput" placeholder="Enter an address or place name" autocomplete="off">
+      <button class="btn btn-primary" id="locateBtn">Locate</button>
+      <button class="btn btn-icon" id="settingsBtn" title="Settings">&#9881;</button>
+    </div>
+
+    <!-- Request history -->
+    <div class="history-section" id="historySection">
+      <div class="history-header">
+        <h4>Recent Requests</h4>
+        <button class="btn-clear" id="clearHistoryBtn">Clear History</button>
+      </div>
+      <ul class="history-list" id="historyList">
+        <!-- Populated dynamically -->
+      </ul>
+      <div class="empty-state" id="emptyState">
+        No geocoding requests yet. Enter an address above.
+      </div>
+    </div>
+  </div>
+</body>
+</html>
