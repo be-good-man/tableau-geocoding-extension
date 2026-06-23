@@ -55,6 +55,52 @@ async function initializeConfig(): Promise<void> {
     updateApiKeyVisibility(providerSelect.value);
   });
 
+  // Background color controls
+  const bgColorPicker = document.getElementById('bgColorPicker') as HTMLInputElement;
+  const pickerBg = document.getElementById('pickerBg') as HTMLDivElement;
+  const colorValue = document.getElementById('colorValue') as HTMLSpanElement;
+  const swatches = document.querySelectorAll('.swatch') as NodeListOf<HTMLButtonElement>;
+
+  // Set swatch background colors from data attributes
+  swatches.forEach(swatch => {
+    swatch.style.background = swatch.dataset.color || '#fff';
+  });
+
+  // Load saved background setting
+  const savedBgColor = tableau.extensions.settings.get('bgColor') || '#ffffff';
+  bgColorPicker.value = savedBgColor;
+  pickerBg.style.background = savedBgColor;
+  colorValue.textContent = savedBgColor;
+  highlightActiveSwatch(savedBgColor);
+
+  // Swatch click handler
+  swatches.forEach(swatch => {
+    swatch.addEventListener('click', () => {
+      const color = swatch.dataset.color || '#ffffff';
+      bgColorPicker.value = color;
+      pickerBg.style.background = color;
+      colorValue.textContent = color;
+      highlightActiveSwatch(color);
+    });
+  });
+
+  // Color picker change handler
+  bgColorPicker.addEventListener('input', () => {
+    pickerBg.style.background = bgColorPicker.value;
+    colorValue.textContent = bgColorPicker.value;
+    highlightActiveSwatch(bgColorPicker.value);
+  });
+
+  function highlightActiveSwatch(activeColor: string): void {
+    swatches.forEach(s => {
+      if (s.dataset.color?.toLowerCase() === activeColor.toLowerCase()) {
+        s.classList.add('active');
+      } else {
+        s.classList.remove('active');
+      }
+    });
+  }
+
   // Save button
   const saveBtn = document.getElementById('saveBtn') as HTMLButtonElement;
   saveBtn.addEventListener('click', async () => {
@@ -84,6 +130,10 @@ async function initializeConfig(): Promise<void> {
       apiKey: enteredKey,
       spatialParamName: selectedParam,
     });
+
+    // Save background color separately (not part of core settings interface)
+    tableau.extensions.settings.set('bgColor', bgColorPicker.value);
+    await tableau.extensions.settings.saveAsync();
 
     tableau.extensions.ui.closeDialog('saved');
   });

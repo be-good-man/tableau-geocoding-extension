@@ -21,6 +21,9 @@ async function initialize(): Promise<void> {
     return;
   }
 
+  // Apply background color immediately
+  applyBackgroundColor();
+
   const currentSettings = getSettings();
 
   // First: check if a target parameter has been selected previously
@@ -60,6 +63,7 @@ async function initialize(): Promise<void> {
     }
   }
 
+  applyBackgroundColor();
   setupEventListeners();
   updateRecentCount();
 }
@@ -148,12 +152,20 @@ async function showParameterSelectionModal(): Promise<void> {
 }
 
 /**
+ * Apply the saved background color to the extension body.
+ */
+function applyBackgroundColor(): void {
+  const bgColor = tableau.extensions.settings.get('bgColor') || '#ffffff';
+  document.body.style.background = bgColor;
+}
+
+/**
  * Open the settings configuration dialog.
  */
 async function openSettingsDialog(): Promise<void> {
   await tableau.extensions.ui.displayDialogAsync('config.html', '', {
     width: 500,
-    height: 420,
+    height: 450,
   });
 }
 
@@ -199,6 +211,7 @@ function setupEventListeners(): void {
       // Re-read settings and reconnect to the spatial parameter
       const currentSettings = getSettings();
       spatialParam = await getParameterByName(currentSettings.spatialParamName);
+      applyBackgroundColor();
       clearStatus();
     } catch (e) {
       // Dialog was closed without saving — no action needed

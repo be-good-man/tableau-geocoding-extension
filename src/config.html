@@ -50,6 +50,75 @@
       margin-top: 4px;
     }
     .hidden { display: none; }
+    .bg-color-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .color-swatches {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .swatch {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      border: 2px solid #ddd;
+      cursor: pointer;
+      padding: 0;
+      transition: border-color 0.15s ease, transform 0.1s ease;
+    }
+    .swatch:hover {
+      border-color: #888;
+      transform: scale(1.1);
+    }
+    .swatch.active {
+      border-color: #4e79a7;
+      box-shadow: 0 0 0 2px rgba(78, 121, 167, 0.3);
+    }
+    .color-picker-wrapper {
+      position: relative;
+      width: 24px;
+      height: 24px;
+      border: 2px solid #ddd;
+      border-radius: 4px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.15s ease;
+    }
+    .color-picker-wrapper:hover {
+      border-color: #888;
+    }
+    .color-picker {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+    }
+    .picker-bg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 2px;
+    }
+    .picker-icon {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .color-value {
+      font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+      font-size: 12px;
+      color: #555;
+    }
     .button-row {
       display: flex;
       justify-content: flex-end;
@@ -103,6 +172,30 @@
       <option value="">-- Select a parameter --</option>
     </select>
     <div class="hint">Choose the workbook parameter that will receive the POINT geometry.</div>
+  </div>
+
+  <div class="form-group">
+    <label for="bgColorPicker">Background Color</label>
+    <div class="bg-color-row">
+      <div class="color-swatches" id="colorSwatches">
+        <button type="button" class="swatch" data-color="#4e79a7" title="Blue"></button>
+        <button type="button" class="swatch" data-color="#f28e2b" title="Orange"></button>
+        <button type="button" class="swatch" data-color="#e15759" title="Red"></button>
+        <button type="button" class="swatch" data-color="#76b7b2" title="Teal"></button>
+        <button type="button" class="swatch" data-color="#59a14f" title="Green"></button>
+        <button type="button" class="swatch" data-color="#edc948" title="Yellow"></button>
+        <button type="button" class="swatch" data-color="#b07aa1" title="Purple"></button>
+        <button type="button" class="swatch" data-color="#ff9da7" title="Pink"></button>
+        <button type="button" class="swatch" data-color="#9c755f" title="Brown"></button>
+        <button type="button" class="swatch" data-color="#bab0ac" title="Gray"></button>
+      </div>
+      <div class="color-picker-wrapper" id="pickerWrapper">
+        <div class="picker-bg" id="pickerBg"></div>
+        <svg class="picker-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 2l-1.5-1.5-2 2-1-1-5.5 5.5 1 1L1.5 11.5v3h3L8 11l1 1 5.5-5.5-1-1 2-2L14 2z" fill="white" stroke="#444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <input type="color" id="bgColorPicker" value="#ffffff" class="color-picker">
+      </div>
+      <span class="color-value" id="colorValue">#ffffff</span>
+    </div>
   </div>
 
   <div class="button-row">
