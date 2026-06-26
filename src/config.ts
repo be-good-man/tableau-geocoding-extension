@@ -207,9 +207,6 @@ function updateApiKeyVisibility(providerId: string): void {
       if (providerId === 'mapbox') {
         apiKeyLabel.textContent = 'Access Token';
         apiKeyInput.placeholder = 'Enter your Mapbox access token';
-      } else if (providerId === 'salesforce-maps') {
-        apiKeyLabel.textContent = 'OAuth Token';
-        apiKeyInput.placeholder = 'Enter your OAuth bearer token';
       } else {
         apiKeyLabel.textContent = 'API Key';
         apiKeyInput.placeholder = 'Enter your API key';

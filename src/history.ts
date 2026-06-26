@@ -48,8 +48,8 @@ function getProviderLabel(providerId: string): string {
   const labels: Record<string, string> = {
     google: 'Google',
     mapbox: 'Mapbox',
-    'salesforce-maps': 'SF Maps',
     geocodio: 'Geocodio',
+    geoapify: 'Geoapify',
     osm: 'OSM',
   };
   return labels[providerId] || providerId;
