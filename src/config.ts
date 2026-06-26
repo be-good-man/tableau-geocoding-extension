@@ -1,5 +1,5 @@
 import { getAllProviders, getProvider } from './providers';
-import { getSettings, saveSettings } from './settings';
+import { getSettings, saveSettings, getApiKeyForProvider, setApiKeyForProvider } from './settings';
 import { getAllParameters } from './parameters';
 
 declare const tableau: any;
@@ -41,18 +41,47 @@ async function initializeConfig(): Promise<void> {
     paramSelect.appendChild(option);
   });
 
-  // Pre-fill API key if saved
+  // Populate path parameter dropdown (spatial parameters, excluding the point param)
+  const pathParamSelect = document.getElementById('pathParamSelect') as HTMLSelectElement;
+  spatialParameters.forEach((p: any) => {
+    const option = document.createElement('option');
+    option.value = p.name;
+    option.textContent = p.name;
+    if (p.name === settings.pathParamName) {
+      option.selected = true;
+    }
+    pathParamSelect.appendChild(option);
+  });
+
+  // Pre-fill API key from the per-provider store (or fall back to current settings)
   const apiKeyInput = document.getElementById('apiKeyInput') as HTMLInputElement;
-  if (settings.apiKey) {
+  if (settings.provider) {
+    const storedKey = getApiKeyForProvider(settings.provider);
+    apiKeyInput.value = storedKey || settings.apiKey;
+  } else if (settings.apiKey) {
     apiKeyInput.value = settings.apiKey;
   }
 
   // Show/hide API key field based on selected provider
   updateApiKeyVisibility(providerSelect.value);
 
-  // Provider change handler
+  // Track the previously selected provider for saving its key on switch
+  let previousProvider = providerSelect.value;
+
+  // Provider change handler — save current key, load stored key for new provider
   providerSelect.addEventListener('change', () => {
-    updateApiKeyVisibility(providerSelect.value);
+    // Save the key for the provider we're switching away from
+    if (previousProvider && apiKeyInput.value.trim()) {
+      setApiKeyForProvider(previousProvider, apiKeyInput.value.trim());
+    }
+
+    // Load the stored key for the newly selected provider
+    const newProvider = providerSelect.value;
+    const storedKey = getApiKeyForProvider(newProvider);
+    apiKeyInput.value = storedKey;
+
+    previousProvider = newProvider;
+    updateApiKeyVisibility(newProvider);
   });
 
   // Background color controls
@@ -114,7 +143,7 @@ async function initializeConfig(): Promise<void> {
     }
 
     if (!selectedParam) {
-      alert('Please select a spatial parameter.');
+      alert('Please select a location parameter.');
       return;
     }
 
@@ -125,10 +154,16 @@ async function initializeConfig(): Promise<void> {
       return;
     }
 
+    // Store the API key per-provider so it's remembered when switching back
+    if (enteredKey) {
+      setApiKeyForProvider(selectedProvider, enteredKey);
+    }
+
     await saveSettings({
       provider: selectedProvider,
       apiKey: enteredKey,
       spatialParamName: selectedParam,
+      pathParamName: pathParamSelect.value,
     });
 
     // Save background color separately (not part of core settings interface)
@@ -151,10 +186,14 @@ async function initializeConfig(): Promise<void> {
 function updateApiKeyVisibility(providerId: string): void {
   const apiKeyGroup = document.getElementById('apiKeyGroup') as HTMLDivElement;
   const noKeyMessage = document.getElementById('noKeyMessage') as HTMLDivElement;
+  const apiKeyLabel = apiKeyGroup.querySelector('label') as HTMLLabelElement;
+  const apiKeyInput = document.getElementById('apiKeyInput') as HTMLInputElement;
 
   if (!providerId) {
     apiKeyGroup.style.display = 'block';
     noKeyMessage.style.display = 'none';
+    apiKeyLabel.textContent = 'API Key';
+    apiKeyInput.placeholder = 'Enter your API key';
     return;
   }
 
@@ -163,6 +202,18 @@ function updateApiKeyVisibility(providerId: string): void {
     if (provider.requiresApiKey) {
       apiKeyGroup.style.display = 'block';
       noKeyMessage.style.display = 'none';
+
+      // Mapbox uses "Access Token" terminology
+      if (providerId === 'mapbox') {
+        apiKeyLabel.textContent = 'Access Token';
+        apiKeyInput.placeholder = 'Enter your Mapbox access token';
+      } else if (providerId === 'salesforce-maps') {
+        apiKeyLabel.textContent = 'OAuth Token';
+        apiKeyInput.placeholder = 'Enter your OAuth bearer token';
+      } else {
+        apiKeyLabel.textContent = 'API Key';
+        apiKeyInput.placeholder = 'Enter your API key';
+      }
     } else {
       apiKeyGroup.style.display = 'none';
       noKeyMessage.style.display = 'block';
@@ -170,6 +221,8 @@ function updateApiKeyVisibility(providerId: string): void {
   } catch {
     apiKeyGroup.style.display = 'block';
     noKeyMessage.style.display = 'none';
+    apiKeyLabel.textContent = 'API Key';
+    apiKeyInput.placeholder = 'Enter your API key';
   }
 }
 

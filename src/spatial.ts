@@ -19,3 +19,13 @@ export function fromWkt(wkt: string): { latitude: number; longitude: number } | 
     latitude: parseFloat(match[2]),
   };
 }
+
+/**
+ * Convert an array of lat/lng points to a WKT LINESTRING.
+ * Requires at least 2 points. Returns null if fewer than 2.
+ */
+export function toLineString(points: Array<{ latitude: number; longitude: number }>): string | null {
+  if (points.length < 2) return null;
+  const coords = points.map(p => `${p.longitude} ${p.latitude}`).join(', ');
+  return `LINESTRING(${coords})`;
+}

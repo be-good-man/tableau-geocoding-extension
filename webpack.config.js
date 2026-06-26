@@ -46,6 +46,11 @@ module.exports = {
       filename: 'history.html',
       chunks: ['history'],
     }),
+    new HtmlWebpackPlugin({
+      template: './src/about.html',
+      filename: 'about.html',
+      chunks: [],
+    }),
     new MiniCssExtractPlugin({
       filename: '[name].css',
     }),
@@ -53,6 +58,7 @@ module.exports = {
       patterns: [
         { from: 'manifest', to: '.' },
         { from: 'public/lib', to: 'lib' },
+        { from: 'public/icons', to: 'icons' },
       ],
     }),
   ],

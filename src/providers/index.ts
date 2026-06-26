@@ -3,6 +3,7 @@ import { GoogleProvider } from './google';
 import { MapboxProvider } from './mapbox';
 import { SalesforceMapsProvider } from './salesforce-maps';
 import { GeocodioProvider } from './geocodio';
+import { GeoapifyProvider } from './geoapify';
 import { OsmProvider } from './osm';
 
 const providers: GeoProvider[] = [
@@ -10,6 +11,7 @@ const providers: GeoProvider[] = [
   new MapboxProvider(),
   new SalesforceMapsProvider(),
   new GeocodioProvider(),
+  new GeoapifyProvider(),
   new OsmProvider(),
 ];
 

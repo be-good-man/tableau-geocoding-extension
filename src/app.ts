@@ -1,14 +1,22 @@
 import './styles.css';
 import { getProvider } from './providers';
 import { geocodeCache, CacheEntry } from './cache';
-import { toWkt } from './spatial';
+import { toWkt, toLineString } from './spatial';
 import { getSettings, isConfigured, saveSettings } from './settings';
-import { getParameterByName, getAllParameters, writeSpatialValue } from './parameters';
+import { getParameterByName, getParametersByNames, getAllParameters, writeSpatialValue } from './parameters';
+import { computeRoute, TravelMode } from './providers/google-routes';
+import { computeMapboxRoute, toMapboxProfile } from './providers/mapbox-directions';
+import { computeOsrmRoute, toOsrmProfile } from './providers/osrm-directions';
+import { computeGeoapifyRoute, toGeoapifyMode } from './providers/geoapify-routing';
 
 declare const tableau: any;
 
 let spatialParam: any = null;
+let pathParam: any = null;
 let lastSubmittedQuery: string = '';
+let lastRoutedOrigin: string = '';
+let lastRoutedDestination: string = '';
+let lastRoutedMode: string = '';
 
 /**
  * Main entry point — initializes the extension and sets up the UI.
@@ -17,19 +25,36 @@ async function initialize(): Promise<void> {
   try {
     await tableau.extensions.initializeAsync();
   } catch (e) {
+    hideLoadingState();
     showStatus('Failed to initialize Tableau Extensions API.', 'error');
     return;
   }
 
-  // Apply background color immediately
+  // Hide loading state and show the UI
+  hideLoadingState();
+
+  // Listen for external settings changes (collaborative environments)
+  tableau.extensions.settings.addEventListener(
+    tableau.TableauEventType.SettingsChanged,
+    onSettingsChanged
+  );
+
+  // Apply background color and check routing availability
   applyBackgroundColor();
+  updateRouteModeAvailability();
 
   const currentSettings = getSettings();
 
   // First: check if a target parameter has been selected previously
   if (currentSettings.spatialParamName) {
-    // Verify the saved parameter still exists in the workbook
-    spatialParam = await getParameterByName(currentSettings.spatialParamName);
+    // Load both parameters in a single API call
+    const namesToLoad = [currentSettings.spatialParamName];
+    if (currentSettings.pathParamName) namesToLoad.push(currentSettings.pathParamName);
+    const params = await getParametersByNames(namesToLoad);
+    spatialParam = params[currentSettings.spatialParamName];
+    if (currentSettings.pathParamName) {
+      pathParam = params[currentSettings.pathParamName];
+    }
     if (!spatialParam) {
       // Previously saved parameter was removed — prompt user to select again
       await showParameterSelectionModal();
@@ -61,6 +86,13 @@ async function initialize(): Promise<void> {
       setupEventListeners();
       return;
     }
+    // Re-read settings after dialog — batch load both parameters
+    const updatedSettings = getSettings();
+    const namesToLoad = [updatedSettings.spatialParamName];
+    if (updatedSettings.pathParamName) namesToLoad.push(updatedSettings.pathParamName);
+    const params = await getParametersByNames(namesToLoad);
+    spatialParam = params[updatedSettings.spatialParamName];
+    pathParam = updatedSettings.pathParamName ? params[updatedSettings.pathParamName] : null;
   }
 
   applyBackgroundColor();
@@ -95,11 +127,11 @@ async function showParameterSelectionModal(): Promise<void> {
     modal.innerHTML = `
       <h3 class="modal-title">Select Target Parameter</h3>
       <p class="modal-body">
-        Choose which spatial parameter should receive the geocoded coordinates (as a WKT POINT).
+        Choose which location parameter should receive the geocoded coordinates (as a WKT POINT).
       </p>
       <div class="form-group">
         <select class="param-select" id="paramSelectModal">
-          <option value="">-- Select a spatial parameter --</option>
+          <option value="">-- Select a location parameter --</option>
         </select>
       </div>
       <div class="modal-footer">
@@ -169,32 +201,50 @@ async function openSettingsDialog(): Promise<void> {
   });
 }
 
+let currentMode: 'location' | 'route' = 'location';
+let lastFocusedRouteField: 'origin' | 'destination' = 'origin';
+
 /**
  * Wire up all UI event listeners.
  */
 function setupEventListeners(): void {
+  // === LOCATION MODE elements ===
   const addressInput = document.getElementById('addressInput') as HTMLInputElement;
   const locateBtn = document.getElementById('locateBtn') as HTMLButtonElement;
   const settingsBtn = document.getElementById('settingsBtn') as HTMLButtonElement;
+  const recentBtn = document.getElementById('recentBtn') as HTMLButtonElement;
+  const toRouteBtn = document.getElementById('toRouteBtn') as HTMLButtonElement;
 
-  // Start with Locate button disabled
+  // === ROUTE MODE elements ===
+  const originInput = document.getElementById('originInput') as HTMLInputElement;
+  const settingsBtnRoute = document.getElementById('settingsBtnRoute') as HTMLButtonElement;
+  const recentBtnRoute = document.getElementById('recentBtnRoute') as HTMLButtonElement;
+  const toLocationBtn = document.getElementById('toLocationBtn') as HTMLButtonElement;
+
+  // === MODE TOGGLE ===
+  toRouteBtn.addEventListener('click', () => {
+    switchMode('route');
+  });
+
+  toLocationBtn.addEventListener('click', () => {
+    switchMode('location');
+  });
+
+  // === LOCATION MODE listeners ===
   locateBtn.disabled = true;
 
-  // Enable/disable Locate button based on input state + hide success check
   addressInput.addEventListener('input', () => {
     updateLocateButtonState(addressInput, locateBtn);
     const successCheck = document.getElementById('successCheck') as HTMLSpanElement;
     successCheck.classList.add('hidden');
   });
 
-  // Locate button click
   locateBtn.addEventListener('click', () => {
     if (!locateBtn.disabled) {
       submitGeocode();
     }
   });
 
-  // Enter key in address field
   addressInput.addEventListener('keydown', (event: KeyboardEvent) => {
     if (event.key === 'Enter') {
       event.preventDefault();
@@ -204,60 +254,250 @@ function setupEventListeners(): void {
     }
   });
 
-  // Settings button
-  settingsBtn.addEventListener('click', async () => {
-    try {
-      await openSettingsDialog();
-      // Re-read settings and reconnect to the spatial parameter
-      const currentSettings = getSettings();
-      spatialParam = await getParameterByName(currentSettings.spatialParamName);
-      applyBackgroundColor();
-      clearStatus();
-    } catch (e) {
-      // Dialog was closed without saving — no action needed
+  // === ROUTE MODE listeners ===
+  originInput.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submitRoute();
     }
   });
 
-  // Recent Requests modal
-  const recentBtn = document.getElementById('recentBtn') as HTMLButtonElement;
+  // Track which route field was last focused
+  originInput.addEventListener('focus', () => {
+    lastFocusedRouteField = 'origin';
+  });
+  const destinationInput = document.getElementById('destinationInput') as HTMLInputElement;
+  destinationInput.addEventListener('focus', () => {
+    lastFocusedRouteField = 'destination';
+  });
 
-  recentBtn.addEventListener('click', async () => {
+  // === SHARED: Settings buttons (both modes) ===
+  const handleSettings = async () => {
     try {
-      // Store history in settings so the dialog can read it
-      const historyPayload = JSON.stringify(geocodeCache.getHistory());
+      await openSettingsDialog();
+      const currentSettings = getSettings();
+      const namesToLoad = [currentSettings.spatialParamName];
+      if (currentSettings.pathParamName) namesToLoad.push(currentSettings.pathParamName);
+      const params = await getParametersByNames(namesToLoad);
+      spatialParam = params[currentSettings.spatialParamName];
+      pathParam = currentSettings.pathParamName ? params[currentSettings.pathParamName] : null;
+      applyBackgroundColor();
+      updateRouteModeAvailability();
+      updateTravelModeVisibility();
+      clearStatus();
+    } catch (e) {
+      // Dialog was closed without saving
+    }
+  };
+  settingsBtn.addEventListener('click', handleSettings);
+  settingsBtnRoute.addEventListener('click', handleSettings);
+
+  // === SHARED: Info (About) buttons (both modes) ===
+  const infoBtn = document.getElementById('infoBtn') as HTMLButtonElement;
+  const infoBtnRoute = document.getElementById('infoBtnRoute') as HTMLButtonElement;
+  const handleInfo = () => {
+    tableau.extensions.ui.displayDialogAsync('about.html', '', {
+      width: 400,
+      height: 300,
+    }).catch(() => { /* closed */ });
+  };
+  infoBtn.addEventListener('click', handleInfo);
+  infoBtnRoute.addEventListener('click', handleInfo);
+
+  // === SHARED: Recent Requests buttons (both modes) ===
+  const handleRecent = async () => {
+    try {
+      const historyPayload = JSON.stringify({
+        entries: geocodeCache.getHistory(),
+        currentMode: currentMode,
+        focusedField: lastFocusedRouteField,
+      });
       tableau.extensions.settings.set('_historyData', historyPayload);
       await tableau.extensions.settings.saveAsync();
 
-      const result = await tableau.extensions.ui.displayDialogAsync('history.html', historyPayload, {
+      const result = await tableau.extensions.ui.displayDialogAsync(
+        'history.html', historyPayload, {
         width: 500,
         height: 400,
       });
       if (result === 'cleared') {
-        // User cleared all history in the dialog
         geocodeCache.clear();
       } else if (result && result !== 'closed') {
-        // User selected a history entry — parse it and apply
         try {
           const entry: CacheEntry = JSON.parse(result);
-          if (spatialParam && entry.result) {
-            const wkt = toWkt(entry.result.latitude, entry.result.longitude);
-            await writeSpatialValue(spatialParam, wkt);
-            const addressInput = document.getElementById('addressInput') as HTMLInputElement;
-            addressInput.value = entry.query;
-            lastSubmittedQuery = entry.query;
-            const locateBtn = document.getElementById('locateBtn') as HTMLButtonElement;
-            locateBtn.disabled = true;
-            const successCheck = document.getElementById('successCheck') as HTMLSpanElement;
-            successCheck.classList.remove('hidden');
+
+          if (entry.type === 'route' && entry.routeWkt && pathParam) {
+            // Apply a route entry — only update the path parameter
+            await writeSpatialValue(pathParam, entry.routeWkt);
+            if (currentMode === 'route' && entry.originAddress && entry.destinationAddress) {
+              originInput.value = entry.originAddress;
+              const destInput = document.getElementById('destinationInput') as HTMLInputElement;
+              destInput.value = entry.destinationAddress;
+            }
+          } else if ((!entry.type || entry.type === 'location') && entry.result) {
+            if (currentMode === 'location') {
+              // Apply a location entry in location mode
+              if (spatialParam) {
+                const wkt = toWkt(entry.result.latitude, entry.result.longitude);
+                await writeSpatialValue(spatialParam, wkt);
+              }
+              addressInput.value = entry.query;
+              lastSubmittedQuery = entry.query;
+              locateBtn.disabled = true;
+              const successCheck = document.getElementById('successCheck') as HTMLSpanElement;
+              successCheck.classList.remove('hidden');
+            } else {
+              // In route mode: fill the focused field with the location query
+              const destInput = document.getElementById('destinationInput') as HTMLInputElement;
+              if (lastFocusedRouteField === 'origin') {
+                originInput.value = entry.query;
+              } else {
+                destInput.value = entry.query;
+              }
+            }
           }
         } catch {
-          // Not valid JSON — dialog was just closed
+          // Not valid JSON
         }
       }
       updateRecentCount();
     } catch {
-      // Dialog was closed without a payload
       updateRecentCount();
+    }
+  };
+  recentBtn.addEventListener('click', handleRecent);
+  recentBtnRoute.addEventListener('click', handleRecent);
+
+  // Enter key on primary destination input
+  destinationInput.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submitRoute();
+    }
+  });
+
+  // Travel mode icon buttons
+  const travelModeBtns = document.querySelectorAll('.travel-mode-btn') as NodeListOf<HTMLButtonElement>;
+  const travelModeInput = document.getElementById('travelModeSelect') as HTMLInputElement;
+
+  // Disable travel mode buttons initially
+  updateTravelModeBtnState();
+
+  // Enable/disable when origin or destination inputs change + clear error/success states
+  const handleOriginChange = () => {
+    updateTravelModeBtnState();
+    originInput.classList.remove('input-error');
+    const originCheck = document.getElementById('originCheck') as HTMLSpanElement;
+    originCheck.classList.add('hidden');
+  };
+  const handleDestinationChange = () => {
+    updateTravelModeBtnState();
+    destinationInput.classList.remove('input-error');
+    const destinationCheck = document.getElementById('destinationCheck') as HTMLSpanElement;
+    destinationCheck.classList.add('hidden');
+  };
+  originInput.addEventListener('input', handleOriginChange);
+  originInput.addEventListener('change', handleOriginChange);
+  destinationInput.addEventListener('input', handleDestinationChange);
+  destinationInput.addEventListener('change', handleDestinationChange);
+
+  travelModeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      // Deactivate all, activate clicked
+      travelModeBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      // Update hidden input value
+      travelModeInput.value = btn.dataset.mode || 'DRIVE';
+      // Execute route immediately
+      submitRoute();
+    });
+  });
+}
+
+/**
+ * Switch between Location and Route modes.
+ */
+/**
+ * Providers that support routing directions.
+ */
+const ROUTING_PROVIDERS = ['google', 'mapbox', 'osm', 'geoapify'];
+
+/**
+ * Show or hide the route mode toggle button based on whether the provider supports routing.
+ */
+function updateRouteModeAvailability(): void {
+  const toRouteBtn = document.getElementById('toRouteBtn') as HTMLButtonElement;
+  const settings = getSettings();
+  if (ROUTING_PROVIDERS.includes(settings.provider)) {
+    toRouteBtn.classList.remove('hidden');
+  } else {
+    toRouteBtn.classList.add('hidden');
+    // If currently in route mode with an unsupported provider, switch back to location
+    if (currentMode === 'route') {
+      switchMode('location');
+    }
+  }
+}
+
+async function switchMode(mode: 'location' | 'route'): Promise<void> {
+  currentMode = mode;
+  const locationMode = document.getElementById('locationMode') as HTMLDivElement;
+  const routeMode = document.getElementById('routeMode') as HTMLDivElement;
+
+  if (mode === 'location') {
+    locationMode.classList.remove('hidden');
+    routeMode.classList.add('hidden');
+  } else {
+    locationMode.classList.add('hidden');
+    routeMode.classList.remove('hidden');
+    // Ensure pathParam is loaded when entering route mode
+    const settings = getSettings();
+    if (settings.pathParamName && !pathParam) {
+      pathParam = await getParameterByName(settings.pathParamName);
+    }
+    updateTravelModeVisibility();
+  }
+}
+
+/**
+ * Show the travel mode dropdown only when Google is the selected provider.
+ */
+function updateTravelModeVisibility(): void {
+  const travelModeRow = document.getElementById('travelModeRow') as HTMLDivElement;
+  const settings = getSettings();
+  if (ROUTING_PROVIDERS.includes(settings.provider)) {
+    travelModeRow.classList.remove('hidden');
+  } else {
+    travelModeRow.classList.add('hidden');
+  }
+  updateTravelModeBtnState();
+}
+
+/**
+ * Enable or disable travel mode buttons based on whether
+ * both origin and destination have values.
+ */
+function updateTravelModeBtnState(): void {
+  const originInput = document.getElementById('originInput') as HTMLInputElement;
+  const destinationInput = document.getElementById('destinationInput') as HTMLInputElement;
+  const travelModeBtns = document.querySelectorAll('.travel-mode-btn') as NodeListOf<HTMLButtonElement>;
+
+  const originVal = originInput?.value.trim() || '';
+  const destVal = destinationInput?.value.trim() || '';
+  const bothFilled = originVal !== '' && destVal !== '';
+  const unchanged = originVal === lastRoutedOrigin && destVal === lastRoutedDestination;
+
+  travelModeBtns.forEach(btn => {
+    if (!bothFilled) {
+      // All disabled when inputs are empty
+      btn.disabled = true;
+    } else if (unchanged) {
+      // Only disable the button for the mode that was already computed
+      btn.disabled = btn.dataset.mode === lastRoutedMode;
+    } else {
+      // Inputs changed — all enabled
+      btn.disabled = false;
     }
   });
 }
@@ -272,7 +512,10 @@ function updateLocateButtonState(addressInput: HTMLInputElement, locateBtn: HTML
 }
 
 /**
- * Submit a geocoding request from the address input.
+ * Submit a geocoding request. Handles both single-address and multi-address (path) mode.
+ */
+/**
+ * Submit a single-address geocode (Location mode).
  */
 async function submitGeocode(): Promise<void> {
   const addressInput = document.getElementById('addressInput') as HTMLInputElement;
@@ -295,17 +538,14 @@ async function submitGeocode(): Promise<void> {
   showStatus('Geocoding...', 'loading');
 
   try {
-    // Check cache first
     let result = geocodeCache.get(address, settings.provider);
-
     if (!result) {
-      // Cache miss — call the provider
       const provider = getProvider(settings.provider);
       result = await provider.geocode(address, settings.apiKey);
       geocodeCache.put(address, settings.provider, result);
     }
 
-    // Write WKT POINT to spatial parameter
+    // Write POINT to spatial parameter
     const wkt = toWkt(result.latitude, result.longitude);
     await writeSpatialValue(spatialParam, wkt);
 
@@ -321,6 +561,304 @@ async function submitGeocode(): Promise<void> {
     updateRecentCount();
   } catch (err: any) {
     showStatus(`Geocoding failed: ${err.message}`, 'error');
+  }
+}
+
+/**
+ * Submit a route (Route mode) — geocodes origin + all destinations, writes LINESTRING.
+ */
+async function submitRoute(): Promise<void> {
+  const settings = getSettings();
+  const originInputEl = document.getElementById('originInput') as HTMLInputElement;
+  const destinationInputEl = document.getElementById('destinationInput') as HTMLInputElement;
+
+  // Clear any previous error highlights
+  originInputEl.classList.remove('input-error');
+  destinationInputEl.classList.remove('input-error');
+
+  if (!settings.provider) {
+    showStatus('No provider configured. Click Settings to set one up.', 'error');
+    return;
+  }
+
+  if (!pathParam) {
+    showStatus('No path parameter configured. Go to Settings to set one up.', 'error');
+    return;
+  }
+
+  const allAddresses = getAllAddresses();
+  if (allAddresses.length < 2) {
+    if (!originInputEl.value.trim()) originInputEl.classList.add('input-error');
+    if (!destinationInputEl.value.trim()) destinationInputEl.classList.add('input-error');
+    showStatus('A route requires an origin and a destination.', 'error');
+    return;
+  }
+
+  const originAddress = allAddresses[0];
+  const destinationAddress = allAddresses[1];
+
+  showStatus('Computing route...', 'loading');
+
+  try {
+    const travelModeInput = document.getElementById('travelModeSelect') as HTMLInputElement;
+    const travelMode = (travelModeInput.value || 'DRIVE');
+
+    // Use routing APIs for Google and Mapbox; straight line for others
+    if (settings.provider === 'google') {
+      const routeResult = await computeRoute(
+        originAddress,
+        destinationAddress,
+        travelMode as TravelMode,
+        settings.apiKey
+      );
+
+      const lineString = toLineString(routeResult.points);
+      if (lineString) {
+        await writeSpatialValue(pathParam, lineString);
+      }
+
+      if (routeResult.points.length > 0 && lineString) {
+        const first = routeResult.points[0];
+        const last = routeResult.points[routeResult.points.length - 1];
+        geocodeCache.putRoute(originAddress, destinationAddress, settings.provider,
+          { latitude: first.latitude, longitude: first.longitude, displayName: originAddress }, lineString);
+        if (!geocodeCache.get(originAddress, settings.provider)) {
+          geocodeCache.put(originAddress, settings.provider, { latitude: first.latitude, longitude: first.longitude, displayName: originAddress });
+        }
+        if (!geocodeCache.get(destinationAddress, settings.provider)) {
+          geocodeCache.put(destinationAddress, settings.provider, { latitude: last.latitude, longitude: last.longitude, displayName: destinationAddress });
+        }
+      }
+
+    } else if (settings.provider === 'mapbox') {
+      // Mapbox: geocode both addresses first, then call Directions API
+      const provider = getProvider(settings.provider);
+
+      let originResult = geocodeCache.get(originAddress, settings.provider);
+      if (!originResult) {
+        try {
+          originResult = await provider.geocode(originAddress, settings.apiKey);
+          geocodeCache.put(originAddress, settings.provider, originResult);
+        } catch {
+          originInputEl.classList.add('input-error');
+          showStatus('Could not resolve origin address.', 'error');
+          return;
+        }
+      }
+
+      let destResult = geocodeCache.get(destinationAddress, settings.provider);
+      if (!destResult) {
+        try {
+          destResult = await provider.geocode(destinationAddress, settings.apiKey);
+          geocodeCache.put(destinationAddress, settings.provider, destResult);
+        } catch {
+          destinationInputEl.classList.add('input-error');
+          showStatus('Could not resolve destination address.', 'error');
+          return;
+        }
+      }
+
+      const profile = toMapboxProfile(travelMode);
+      const routeResult = await computeMapboxRoute(
+        { latitude: originResult.latitude, longitude: originResult.longitude },
+        { latitude: destResult.latitude, longitude: destResult.longitude },
+        profile,
+        settings.apiKey
+      );
+
+      const lineString = toLineString(routeResult.points);
+      if (lineString) {
+        await writeSpatialValue(pathParam, lineString);
+        geocodeCache.putRoute(originAddress, destinationAddress, settings.provider,
+          { latitude: originResult.latitude, longitude: originResult.longitude, displayName: originAddress }, lineString);
+      }
+
+    } else if (settings.provider === 'osm') {
+      // OSM: geocode with Nominatim, then route with OSRM
+      const provider = getProvider(settings.provider);
+
+      let originResult = geocodeCache.get(originAddress, settings.provider);
+      if (!originResult) {
+        try {
+          originResult = await provider.geocode(originAddress, settings.apiKey);
+          geocodeCache.put(originAddress, settings.provider, originResult);
+        } catch {
+          originInputEl.classList.add('input-error');
+          showStatus('Could not resolve origin address.', 'error');
+          return;
+        }
+      }
+
+      let destResult = geocodeCache.get(destinationAddress, settings.provider);
+      if (!destResult) {
+        try {
+          destResult = await provider.geocode(destinationAddress, settings.apiKey);
+          geocodeCache.put(destinationAddress, settings.provider, destResult);
+        } catch {
+          destinationInputEl.classList.add('input-error');
+          showStatus('Could not resolve destination address.', 'error');
+          return;
+        }
+      }
+
+      const profile = toOsrmProfile(travelMode);
+      const routeResult = await computeOsrmRoute(
+        { latitude: originResult.latitude, longitude: originResult.longitude },
+        { latitude: destResult.latitude, longitude: destResult.longitude },
+        profile
+      );
+
+      const lineString = toLineString(routeResult.points);
+      if (lineString) {
+        await writeSpatialValue(pathParam, lineString);
+        geocodeCache.putRoute(originAddress, destinationAddress, settings.provider,
+          { latitude: originResult.latitude, longitude: originResult.longitude, displayName: originAddress }, lineString);
+
+        if (!geocodeCache.get(originAddress, settings.provider)) {
+          geocodeCache.put(originAddress, settings.provider, originResult);
+        }
+        if (!geocodeCache.get(destinationAddress, settings.provider)) {
+          geocodeCache.put(destinationAddress, settings.provider, destResult);
+        }
+      }
+
+    } else if (settings.provider === 'geoapify') {
+      // Geoapify: geocode both addresses, then route with Geoapify Routing API
+      const provider = getProvider(settings.provider);
+
+      let originResult = geocodeCache.get(originAddress, settings.provider);
+      if (!originResult) {
+        try {
+          originResult = await provider.geocode(originAddress, settings.apiKey);
+          geocodeCache.put(originAddress, settings.provider, originResult);
+        } catch {
+          originInputEl.classList.add('input-error');
+          showStatus('Could not resolve origin address.', 'error');
+          return;
+        }
+      }
+
+      let destResult = geocodeCache.get(destinationAddress, settings.provider);
+      if (!destResult) {
+        try {
+          destResult = await provider.geocode(destinationAddress, settings.apiKey);
+          geocodeCache.put(destinationAddress, settings.provider, destResult);
+        } catch {
+          destinationInputEl.classList.add('input-error');
+          showStatus('Could not resolve destination address.', 'error');
+          return;
+        }
+      }
+
+      const mode = toGeoapifyMode(travelMode);
+      const routeResult = await computeGeoapifyRoute(
+        { latitude: originResult.latitude, longitude: originResult.longitude },
+        { latitude: destResult.latitude, longitude: destResult.longitude },
+        mode,
+        settings.apiKey
+      );
+
+      const lineString = toLineString(routeResult.points);
+      if (lineString) {
+        await writeSpatialValue(pathParam, lineString);
+        geocodeCache.putRoute(originAddress, destinationAddress, settings.provider,
+          { latitude: originResult.latitude, longitude: originResult.longitude, displayName: originAddress }, lineString);
+
+        if (!geocodeCache.get(originAddress, settings.provider)) {
+          geocodeCache.put(originAddress, settings.provider, originResult);
+        }
+        if (!geocodeCache.get(destinationAddress, settings.provider)) {
+          geocodeCache.put(destinationAddress, settings.provider, destResult);
+        }
+      }
+
+    } else {
+      // For other providers, geocode both addresses and draw a straight line
+      const provider = getProvider(settings.provider);
+      const resolvedPoints: Array<{ latitude: number; longitude: number }> = [];
+
+      // Geocode origin
+      let originResult = geocodeCache.get(originAddress, settings.provider);
+      if (!originResult) {
+        try {
+          originResult = await provider.geocode(originAddress, settings.apiKey);
+          geocodeCache.put(originAddress, settings.provider, originResult);
+        } catch {
+          originInputEl.classList.add('input-error');
+          showStatus('Could not resolve origin address.', 'error');
+          return;
+        }
+      }
+      resolvedPoints.push({ latitude: originResult.latitude, longitude: originResult.longitude });
+
+      // Geocode destination
+      let destResult = geocodeCache.get(destinationAddress, settings.provider);
+      if (!destResult) {
+        try {
+          destResult = await provider.geocode(destinationAddress, settings.apiKey);
+          geocodeCache.put(destinationAddress, settings.provider, destResult);
+        } catch {
+          destinationInputEl.classList.add('input-error');
+          showStatus('Could not resolve destination address.', 'error');
+          return;
+        }
+      }
+      resolvedPoints.push({ latitude: destResult.latitude, longitude: destResult.longitude });
+
+      // Write LINESTRING to path parameter
+      const lineString = toLineString(resolvedPoints);
+      if (lineString) {
+        await writeSpatialValue(pathParam, lineString);
+
+        // Cache the route for recent requests
+        geocodeCache.putRoute(
+          originAddress,
+          destinationAddress,
+          settings.provider,
+          { latitude: resolvedPoints[0].latitude, longitude: resolvedPoints[0].longitude, displayName: originAddress },
+          lineString
+        );
+
+        // Also cache origin and destination as individual locations (if not already cached)
+        if (!geocodeCache.get(originAddress, settings.provider)) {
+          geocodeCache.put(originAddress, settings.provider, {
+            latitude: resolvedPoints[0].latitude,
+            longitude: resolvedPoints[0].longitude,
+            displayName: originAddress,
+          });
+        }
+        if (!geocodeCache.get(destinationAddress, settings.provider)) {
+          geocodeCache.put(destinationAddress, settings.provider, {
+            latitude: resolvedPoints[1].latitude,
+            longitude: resolvedPoints[1].longitude,
+            displayName: destinationAddress,
+          });
+        }
+      }
+    }
+
+    // Clear error highlights and show success checks
+    originInputEl.classList.remove('input-error');
+    destinationInputEl.classList.remove('input-error');
+    const originCheck = document.getElementById('originCheck') as HTMLSpanElement;
+    const destinationCheck = document.getElementById('destinationCheck') as HTMLSpanElement;
+    originCheck.classList.remove('hidden');
+    destinationCheck.classList.remove('hidden');
+
+    // Track last routed addresses and mode, then update button states
+    lastRoutedOrigin = originInputEl.value.trim();
+    lastRoutedDestination = destinationInputEl.value.trim();
+    const travelModeInputFinal = document.getElementById('travelModeSelect') as HTMLInputElement;
+    lastRoutedMode = travelModeInputFinal.value || 'DRIVE';
+    updateTravelModeBtnState();
+
+    clearStatus();
+    updateRecentCount();
+  } catch (err: any) {
+    // Highlight both inputs since we can't determine which address failed
+    originInputEl.classList.add('input-error');
+    destinationInputEl.classList.add('input-error');
+    showStatus(`Route failed: ${err.message}`, 'error');
   }
 }
 
@@ -352,7 +890,7 @@ function showMissingParameterModal(paramName: string): void {
   modal.className = 'modal-dialog';
 
   modal.innerHTML = `
-    <h3 class="modal-title">No Spatial Parameter Found</h3>
+    <h3 class="modal-title">No Location Parameter Found</h3>
     <p class="modal-body">
       This extension requires a spatial parameter in your workbook. No spatial parameters were found.
     </p>
@@ -449,6 +987,58 @@ function showStatus(message: string, type: 'error' | 'loading'): void {
 function clearStatus(): void {
   const container = document.getElementById('statusContainer') as HTMLDivElement;
   container.innerHTML = '';
+}
+
+/**
+ * Hide the loading state and show the appropriate mode UI.
+ */
+function hideLoadingState(): void {
+  const loadingState = document.getElementById('loadingState') as HTMLDivElement;
+  loadingState.classList.add('hidden');
+  // Show location mode by default
+  const locationMode = document.getElementById('locationMode') as HTMLDivElement;
+  locationMode.classList.remove('hidden');
+}
+
+/**
+ * Handle external settings changes (e.g., another user updated settings in a collaborative session).
+ */
+async function onSettingsChanged(): Promise<void> {
+  const settings = getSettings();
+
+  // Re-load parameters
+  const namesToLoad = [settings.spatialParamName];
+  if (settings.pathParamName) namesToLoad.push(settings.pathParamName);
+  const params = await getParametersByNames(namesToLoad);
+  spatialParam = params[settings.spatialParamName];
+  pathParam = settings.pathParamName ? params[settings.pathParamName] : null;
+
+  // Update UI state
+  applyBackgroundColor();
+  updateRouteModeAvailability();
+  updateTravelModeVisibility();
+}
+
+/**
+ * Add an additional destination input row (C, D, E...).
+ * The first destination (B) is always present in the HTML.
+ */
+
+/**
+ * Get origin and destination addresses in order. Used by Route mode.
+ */
+function getAllAddresses(): string[] {
+  const addresses: string[] = [];
+
+  const originInput = document.getElementById('originInput') as HTMLInputElement;
+  const origin = originInput.value.trim();
+  if (origin) addresses.push(origin);
+
+  const destinationInput = document.getElementById('destinationInput') as HTMLInputElement;
+  const dest = destinationInput.value.trim();
+  if (dest) addresses.push(dest);
+
+  return addresses;
 }
 
 // Initialize when the DOM is ready

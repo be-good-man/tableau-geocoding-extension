@@ -46,7 +46,7 @@
     }
     .form-group .hint {
       font-size: 12px;
-      color: #888;
+      color: #555;
       margin-top: 4px;
     }
     .hidden { display: none; }
@@ -167,11 +167,19 @@
   </div>
 
   <div class="form-group">
-    <label for="paramSelect">Spatial Parameter</label>
+    <label for="paramSelect">Location Parameter</label>
     <select id="paramSelect">
       <option value="">-- Select a parameter --</option>
     </select>
     <div class="hint">Choose the workbook parameter that will receive the POINT geometry.</div>
+  </div>
+
+  <div class="form-group">
+    <label for="pathParamSelect">Path Parameter (optional)</label>
+    <select id="pathParamSelect">
+      <option value="">-- None (disable path) --</option>
+    </select>
+    <div class="hint">Select a spatial parameter to receive a LINESTRING connecting geocoded points in order.</div>
   </div>
 
   <div class="form-group">
